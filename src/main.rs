@@ -7,14 +7,14 @@ use ethers::{
     providers::{Provider, StreamExt, Ws},
     utils::{Ganache, GanacheInstance},
 };
-use std::{
-    error::Error,
-    sync::{Arc, Mutex},
-    any::type_name,
-    fmt::Debug,
-};
-use ethers::providers::Middleware;
+
+use std::{error::Error, sync::{Arc, Mutex}, any::type_name, fmt::Debug};
+use ethers::contract::{ContractError, LogMeta};
+use ethers::prelude::stream::EventStream;
+use ethers::providers::{Middleware, SubscriptionStream};
+use ethers::types::Log;
 use eyre::Result;
+use tokio::task;
 
 abigen!(
     FarawayNFT,
@@ -27,11 +27,15 @@ lazy_static! {
 }
 
 const STARTING_BLOCK: i32 = 8450915;
-const NFT_FEED: &str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
-const WSS_URL: &str = "wss://goerli.infura.io/ws/v3/20d3e6b3b40f40399f1bf6c458c37974";
+const NFT_FEED: &'static str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
+const WSS_URL: &'static str = "wss://goerli.infura.io/ws/v3/20d3e6b3b40f40399f1bf6c458c37974";
 
 /// ProviderWs is a type alias for a Provider with a Websocket transport.
+#[allow(dead_code)]
 type ProviderWs = Provider<Ws>;
+/// Stream is a type alias for an EventStream of a specific event type.
+#[allow(dead_code)]
+type Stream<'a, Ev> = EventStream<'a, SubscriptionStream<'a, Ws, Log>, (Ev, LogMeta), ContractError<ProviderWs>>;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -41,23 +45,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let version = client.client_version().await?;
     println!("Client Version: {}", version);
 
-    // Build an Event by type. We are not tied to a contract instance.
-    // We use builder functions to refine the event filter
-    let event = Contract::event_of_type::<CollectionCreatedFilter>(&client)
-        .from_block(STARTING_BLOCK)
-        .address(ValueOrArray::Array(vec![
-            NFT_FEED.parse()?,
-        ]));
+    let task = task::spawn(async move {
+        read_event_stream::<CollectionCreatedFilter>(&client, None).await;
+    });
 
-    let mut stream = event.subscribe_with_meta().await?.take(1);
-
-    // Note that `log` has type AnswerUpdatedFilter
-    while let Some(Ok((log, meta))) = stream.next().await {
-        println!("{log:?}");
-        println!("{meta:?}")
-    }
-
-    println!("Completed...");
+    task.await?;
+    println!("Exiting...");
 
     Ok(())
 }
@@ -70,14 +63,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// const NFT_FEED: &str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
 /// let address: Address = NFT_FEED.parse()?;
 /// let contract = FarawayNFT::new(address, Arc::clone(&client));
-/// listen_specific_events::<CollectionCreatedFilter>(&contract, STARTING_BLOCK).await?;
+/// listen_specific_events::<CollectionCreatedFilter>(&contract).await?;
 /// ```
 #[allow(dead_code)]
-async fn listen_specific_events<Ev: EthEvent>(contract: &Contract<ProviderWs>, block: i32) -> Result<()>
+async fn listen_specific_events<Ev: EthEvent>(contract: &Contract<ProviderWs>) -> Result<(), Box<dyn Error>>
     where
         Ev: Default + Debug,
 {
-    let events = contract.event::<Ev>().from_block(block);
+    println!("Started reading event stream");
+
+    let events = contract.event::<Ev>().from_block(STARTING_BLOCK);
     let mut stream = events.stream().await?.take(1);
 
     let type_name = type_of(Ev::default());
@@ -98,14 +93,39 @@ async fn listen_specific_events<Ev: EthEvent>(contract: &Contract<ProviderWs>, b
 /// const NFT_FEED: &str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
 /// let address: Address = NFT_FEED.parse()?;
 /// let contract = FarawayNFT::new(address, Arc::clone(&client));
-/// let logs = query_events::<CollectionCreatedFilter>(&contract, STARTING_BLOCK).await?;
+/// let logs = query_events::<CollectionCreatedFilter>(&contract).await?;
 /// ```
 #[allow(dead_code)]
-async fn query_events<Ev: EthEvent>(contract: &Contract<ProviderWs>, block: i32) -> Result<Vec<Ev>> {
-    let logs = contract.event::<Ev>().from_block(block).query().await?;
-
+async fn query_events<Ev: EthEvent>(contract: &Contract<ProviderWs>) -> Result<Vec<Ev>> {
+    let logs = contract.event::<Ev>().from_block(STARTING_BLOCK).query().await?;
     Ok(logs)
 }
+
+/// Build an Event by type, not tied to a contract instance.
+/// Uses builder functions to refine the event filter
+#[allow(dead_code)]
+async fn read_event_stream<'a, Ev: EthEvent + 'a + Debug>(client: &'a Arc<ProviderWs>, take: Option<usize>)
+{
+    println!("Started reading event stream");
+
+    let event = Contract::event_of_type::<Ev>(client)
+        .from_block(STARTING_BLOCK)
+        .address(ValueOrArray::Array(vec![
+            NFT_FEED.parse().unwrap(),
+        ]));
+
+    let mut stream = event
+        .subscribe_with_meta().await.unwrap()
+        .take(take.unwrap_or(1));
+
+    while let Some(Ok((log, meta))) = stream.next().await {
+        println!("{log:?}");
+        println!("{meta:?}")
+    }
+
+    println!("Completed reading event stream");
+}
+
 
 /// Get a client to interact with the Ethereum network.
 async fn get_client() -> ProviderWs {
