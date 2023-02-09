@@ -1,7 +1,11 @@
 [package]
-name = "rust-ether-listener"
+name = "events"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "faraway"
+path = "src/main.rs"
 
 [dependencies]
 clap = "4.1.4"

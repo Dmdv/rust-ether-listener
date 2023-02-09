@@ -1183,6 +1183,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "events"
+version = "0.1.0"
+dependencies = [
+ "clap 4.1.4",
+ "ethers",
+ "eyre",
+ "hex",
+ "lazy_static",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "eyre"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2511,20 +2525,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "rust-ether-listener"
-version = "0.1.0"
-dependencies = [
- "clap 4.1.4",
- "ethers",
- "eyre",
- "hex",
- "lazy_static",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
