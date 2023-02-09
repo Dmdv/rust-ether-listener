@@ -26,6 +26,7 @@ lazy_static! {
     static ref EVENTS: Mutex<Vec<String>> = Mutex::new(vec![]);
 }
 
+const EVENTS_CAPACITY: usize = 100000;
 const STARTING_BLOCK: i32 = 8450915;
 const NFT_FEED: &'static str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
 const WSS_URL: &'static str = "wss://goerli.infura.io/ws/v3/20d3e6b3b40f40399f1bf6c458c37974";
@@ -40,22 +41,22 @@ type Stream<'a, Ev> = EventStream<'a, SubscriptionStream<'a, Ws, Log>, (Ev, LogM
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let provider = get_client().await;
-    let client = Arc::new(provider);
-    let client2 =  Arc::clone(&client);
+    let client_a = Arc::new(provider);
+    let client_b =  Arc::clone(&client_a);
 
-    let version = client.client_version().await?;
+    let version = client_a.client_version().await?;
     println!("Client Version: {}", version);
 
-    let task = task::spawn(async move {
-        read_event_stream::<CollectionCreatedFilter>(&client, Some(1000)).await;
+    let task_a = task::spawn(async move {
+        read_event_stream::<CollectionCreatedFilter>(&client_a, Some(EVENTS_CAPACITY)).await;
     });
 
-    let task2 = task::spawn(async move {
-        read_event_stream::<TokenMintedFilter>(&client2, Some(1000)).await;
+    let task_b = task::spawn(async move {
+        read_event_stream::<TokenMintedFilter>(&client_b, Some(EVENTS_CAPACITY)).await;
     });
 
-    task.await?;
-    task2.await?;
+    task_a.await?;
+    task_b.await?;
     println!("Exiting...");
 
     Ok(())
@@ -126,7 +127,9 @@ async fn read_event_stream<'a, Ev: EthEvent + 'a + Debug>(client: &'a Arc<Provid
 
     while let Some(Ok((log, meta))) = stream.next().await {
         println!("{log:?}");
-        println!("{meta:?}")
+        println!("{meta:?}");
+
+        EVENTS.lock().unwrap().push(format!("{:?}", log));
     }
 
     println!("Completed reading event stream");
