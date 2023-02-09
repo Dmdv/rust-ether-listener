@@ -41,15 +41,21 @@ type Stream<'a, Ev> = EventStream<'a, SubscriptionStream<'a, Ws, Log>, (Ev, LogM
 async fn main() -> Result<(), Box<dyn Error>> {
     let provider = get_client().await;
     let client = Arc::new(provider);
+    let client2 =  Arc::clone(&client);
 
     let version = client.client_version().await?;
     println!("Client Version: {}", version);
 
     let task = task::spawn(async move {
-        read_event_stream::<CollectionCreatedFilter>(&client, None).await;
+        read_event_stream::<CollectionCreatedFilter>(&client, Some(1000)).await;
+    });
+
+    let task2 = task::spawn(async move {
+        read_event_stream::<TokenMintedFilter>(&client2, Some(1000)).await;
     });
 
     task.await?;
+    task2.await?;
     println!("Exiting...");
 
     Ok(())
@@ -125,7 +131,6 @@ async fn read_event_stream<'a, Ev: EthEvent + 'a + Debug>(client: &'a Arc<Provid
 
     println!("Completed reading event stream");
 }
-
 
 /// Get a client to interact with the Ethereum network.
 async fn get_client() -> ProviderWs {
