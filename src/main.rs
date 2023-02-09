@@ -1,53 +1,55 @@
-use eyre::Result;
-use ethers_core::{
-    abi::Abi,
-    types::{Address, H256},
-};
-
-use ethers_contract::Contract;
-use ethers_providers::{Provider, Http};
-use ethers_signers::Wallet;
+#[macro_use]
+extern crate lazy_static;
 
 use ethers::{
-    contract::{abigen, Contract},
-    core::types::ValueOrArray,
+    contract::{abigen, Contract, EthEvent},
+    core::{types::ValueOrArray},
     providers::{Provider, StreamExt, Ws},
-    utils::Ganache,
+    utils::{Ganache, GanacheInstance},
 };
-
 use std::{
     error::Error,
-    sync::Arc,
-    convert::TryFrom,
+    sync::{Arc, Mutex},
+    any::type_name,
+    fmt::Debug,
 };
+use ethers::providers::Middleware;
+use eyre::Result;
 
 abigen!(
-    AggregatorInterface,
-    r#"[
-        event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
-    ]"#,
+    FarawayNFT,
+    "src/FarawayNFT.json",
+    event_derives (serde::Deserialize, serde::Serialize),
 );
 
-const PRICE_FEED_1: &str = "0x7de93682b9b5d80d45cd371f7a14f74d49b0914c";
+lazy_static! {
+    static ref EVENTS: Mutex<Vec<String>> = Mutex::new(vec![]);
+}
+
+const STARTING_BLOCK: i32 = 8450915;
+const NFT_FEED: &str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
+const WSS_URL: &str = "wss://goerli.infura.io/ws/v3/20d3e6b3b40f40399f1bf6c458c37974";
+
+/// ProviderWs is a type alias for a Provider with a Websocket transport.
+type ProviderWs = Provider<Ws>;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Spawn a ganache instance
-    // let ganache = Ganache::new().spawn();
-    // println!("HTTP Endpoint: {}", ganache.endpoint());
+    let provider = get_client().await;
+    let client = Arc::new(provider);
 
-    let client = get_client().await;
-    let client = Arc::new(client);
+    let version = client.client_version().await?;
+    println!("Client Version: {}", version);
 
-    // Build an Event by type. We are not tied to a contract instance. We use builder functions to
-    // refine the event filter
-    let event = Contract::event_of_type::<AnswerUpdatedFilter>(&client)
-        .from_block(16022082)
+    // Build an Event by type. We are not tied to a contract instance.
+    // We use builder functions to refine the event filter
+    let event = Contract::event_of_type::<CollectionCreatedFilter>(&client)
+        .from_block(STARTING_BLOCK)
         .address(ValueOrArray::Array(vec![
-            PRICE_FEED_1.parse()?,
+            NFT_FEED.parse()?,
         ]));
 
-    let mut stream = event.subscribe_with_meta().await?.take(2);
+    let mut stream = event.subscribe_with_meta().await?.take(1);
 
     // Note that `log` has type AnswerUpdatedFilter
     while let Some(Ok((log, meta))) = stream.next().await {
@@ -55,11 +57,70 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("{meta:?}")
     }
 
+    println!("Completed...");
+
     Ok(())
 }
 
-async fn get_client() -> Provider<Ws> {
-    Provider::<Ws>::connect("wss://mainnet.infura.io/ws/v3/c60b0bb42f8a4c6481ecd229eddaca27")
+/// Given a contract instance subscribe to a single type of event.
+///
+/// # Example:
+///
+/// ```norun
+/// const NFT_FEED: &str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
+/// let address: Address = NFT_FEED.parse()?;
+/// let contract = FarawayNFT::new(address, Arc::clone(&client));
+/// listen_specific_events::<CollectionCreatedFilter>(&contract, STARTING_BLOCK).await?;
+/// ```
+#[allow(dead_code)]
+async fn listen_specific_events<Ev: EthEvent>(contract: &Contract<ProviderWs>, block: i32) -> Result<()>
+    where
+        Ev: Default + Debug,
+{
+    let events = contract.event::<Ev>().from_block(block);
+    let mut stream = events.stream().await?.take(1);
+
+    let type_name = type_of(Ev::default());
+    println!("Event type: {type_name:?}");
+
+    while let Some(Ok(f)) = stream.next().await {
+        println!("{f:?}");
+    }
+
+    Ok(())
+}
+
+/// Given a contract instance query a single type of evens without subscribing.
+///
+/// # Example:
+///
+/// ```norun
+/// const NFT_FEED: &str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
+/// let address: Address = NFT_FEED.parse()?;
+/// let contract = FarawayNFT::new(address, Arc::clone(&client));
+/// let logs = query_events::<CollectionCreatedFilter>(&contract, STARTING_BLOCK).await?;
+/// ```
+#[allow(dead_code)]
+async fn query_events<Ev: EthEvent>(contract: &Contract<ProviderWs>, block: i32) -> Result<Vec<Ev>> {
+    let logs = contract.event::<Ev>().from_block(block).query().await?;
+
+    Ok(logs)
+}
+
+/// Get a client to interact with the Ethereum network.
+async fn get_client() -> ProviderWs {
+    ProviderWs::connect(WSS_URL)
         .await
         .unwrap()
+}
+
+/// Get a local Ganache instance.
+#[allow(dead_code)]
+async fn get_ganache() -> GanacheInstance {
+    Ganache::new().spawn()
+}
+
+/// Get the type name of a generic type.
+fn type_of<T>(_: T) -> &'static str {
+    type_name::<T>()
 }
