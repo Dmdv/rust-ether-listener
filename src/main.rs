@@ -1,20 +1,27 @@
-#[macro_use]
-extern crate lazy_static;
+#[macro_use] extern crate rocket;
+#[macro_use] extern crate lazy_static;
 
 use ethers::{
     contract::{abigen, Contract, EthEvent},
     core::{types::ValueOrArray},
     providers::{Provider, StreamExt, Ws},
     utils::{Ganache, GanacheInstance},
+    contract::{ContractError, LogMeta},
+    prelude::stream::EventStream,
+    providers::{Middleware, SubscriptionStream},
+    types::Log
 };
 
 use std::{error::Error, sync::{Arc, Mutex}, any::type_name, fmt::Debug};
-use ethers::contract::{ContractError, LogMeta};
-use ethers::prelude::stream::EventStream;
-use ethers::providers::{Middleware, SubscriptionStream};
-use ethers::types::Log;
 use eyre::Result;
 use tokio::task;
+use rocket::{
+    serde::{Serialize, json::Json},
+    Rocket,
+    Config,
+    log::LogLevel,
+    response::content::RawHtml,
+};
 
 abigen!(
     FarawayNFT,
@@ -26,6 +33,8 @@ lazy_static! {
     static ref EVENTS: Mutex<Vec<String>> = Mutex::new(vec![]);
 }
 
+const ADDRESS: &'static str = "127.0.0.1";
+const PORT: u16 = 9000;
 const EVENTS_CAPACITY: usize = 100000;
 const STARTING_BLOCK: i32 = 8450915;
 const NFT_FEED: &'static str = "0xfeDB19A138fdF3432A88eB3dB9AD36f7aed073B0";
@@ -37,6 +46,36 @@ type ProviderWs = Provider<Ws>;
 /// Stream is a type alias for an EventStream of a specific event type.
 #[allow(dead_code)]
 type Stream<'a, Ev> = EventStream<'a, SubscriptionStream<'a, Ws, Log>, (Ev, LogMeta), ContractError<ProviderWs>>;
+
+/// Returns events from the NFT feed contract.
+#[derive(Serialize)]
+struct EventsResponse {
+    data: Vec<String>,
+}
+
+#[get("/")]
+fn events() -> Json<EventsResponse> {
+    let data = EVENTS.lock().unwrap().clone();
+
+    Json(EventsResponse { data })
+}
+
+#[get("/", format = "text/html")]
+fn index() -> RawHtml<&'static str> {
+    let body =
+        "<!DOCTYPE html>
+        <html>
+            <head>
+                <title>Faraway NFT Events</title>
+            </head>
+            <body>
+            <h3>Faraway NFT Events</h3>
+            <p>Visit <a href=\"/events\">Events</a> to see the events.</p>
+            </body>
+        </html>";
+
+    RawHtml(body)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -55,11 +94,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
         read_event_stream::<TokenMintedFilter>(&client_b, Some(EVENTS_CAPACITY)).await;
     });
 
-    task_a.await?;
-    task_b.await?;
+    let task_c = task::spawn(async {
+        create_rocket().await
+    });
+
+    tokio::select! {
+        _ = task_a => (),
+        _ = task_b => (),
+        _ = task_c => (),
+        _ = tokio::signal::ctrl_c() => {
+            println!("Received Ctrl-C signal, cancelling tasks");
+        }
+    }
+
     println!("Exiting...");
 
     Ok(())
+}
+
+async fn create_rocket() -> Result<Rocket<rocket::Ignite>, rocket::Error> {
+    let mut config = Config::default();
+    config.port = PORT;
+    config.address = ADDRESS.parse().expect("Invalid IP address");
+    config.log_level = LogLevel::Normal;
+    config.cli_colors = true;
+
+    let _rocket = rocket::custom(config)
+        .mount("/", routes![index])
+        .mount("/events", routes![events])
+        .launch().await?;
+
+    Ok(_rocket)
 }
 
 /// Given a contract instance subscribe to a single type of event.
