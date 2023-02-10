@@ -37,6 +37,8 @@ FROM alpine
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
 
+EXPOSE 9000
+
 WORKDIR /faraway
 
 # Copy our build

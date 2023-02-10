@@ -33,7 +33,7 @@ lazy_static! {
     static ref EVENTS: Mutex<Vec<String>> = Mutex::new(vec![]);
 }
 
-const ADDRESS: &'static str = "127.0.0.1";
+const ADDRESS: &'static str = "0.0.0.0";
 const PORT: u16 = 9000;
 const EVENTS_CAPACITY: usize = 100000;
 const STARTING_BLOCK: i32 = 8450915;
