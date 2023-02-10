@@ -7,6 +7,10 @@ edition = "2021"
 name = "faraway"
 path = "src/main.rs"
 
+[profile.release]
+lto = true
+codegen-units = 1
+
 [dependencies]
 clap = "4.1.4"
 ethers = { version = "1.0.2", features = ["abigen", "rustls", "ws", "legacy"] }
