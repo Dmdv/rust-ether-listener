@@ -3,8 +3,8 @@ Listen to the contract events using rocker crate and Ether crate
 
 Refers to:
 
-https://github.com/Dmdv/nft-frontend
-https://github.com/Dmdv/nft-factory
+- https://github.com/Dmdv/nft-frontend
+- https://github.com/Dmdv/nft-factory
 
 ### Usage
 
